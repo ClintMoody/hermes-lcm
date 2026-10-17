@@ -124,15 +124,17 @@ def configure_connection(conn: sqlite3.Connection) -> None:
                                              or cap growth while another
                                              connection holds an old WAL
                                              end mark.
-    - mmap_size=268435456 (256 MiB)        : memory-map reads so concurrent
-                                              readers cache WAL pages in RAM.
+    - mmap_size=0 (2026-09-29 fix; was 268435456 = 256 MiB) : mmap reads were
+      the suspect in corruption #4 (4 concurrent processes each mmap'ing the
+      same 5 MB main db while a 229 s compaction write ran). With mmap off,
+      every read is a normal page-cache read; the corruption class disappears.
     """
     conn.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
     _execute_wal_conversion_with_lock_retry(conn)
     conn.execute("PRAGMA synchronous=FULL")
     conn.execute("PRAGMA wal_autocheckpoint=500")
     conn.execute("PRAGMA journal_size_limit=67108864")
-    conn.execute("PRAGMA mmap_size=268435456")
+    conn.execute("PRAGMA mmap_size=0")
 
 
 def _execute_wal_conversion_with_lock_retry(
