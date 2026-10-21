@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
+from . import wal_generation_guard
 from .db_bootstrap import (
     ExternalContentFtsSpec,
     add_column_if_missing,
@@ -885,6 +886,9 @@ class SummaryDAG:
                     conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
             except sqlite3.Error:
                 pass
+            # Hand the WAL generation back before the close so a true last
+            # close can still reset the sidecars (see wal_generation_guard).
+            wal_generation_guard.disarm(conn)
             conn.close()
             self._conn = None
 

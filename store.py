@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+from . import wal_generation_guard
 from .db_bootstrap import (
     ExternalContentFtsSpec,
     add_column_if_missing,
@@ -1754,6 +1755,9 @@ class MessageStore:
                     conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
             except sqlite3.Error:
                 pass  # best-effort only; don't let this mask the real close()
+            # Hand the WAL generation back before the close so a true last
+            # close can still reset the sidecars (see wal_generation_guard).
+            wal_generation_guard.disarm(conn)
             conn.close()
             self._conn = None
 

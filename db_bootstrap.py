@@ -20,6 +20,16 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
+# db_bootstrap is imported both as a package member (``hermes_lcm.db_bootstrap``,
+# production and most tests) and bare (``import db_bootstrap``, the
+# cross-process gate tests run from the plugin directory). It is the only module
+# here with no intra-package imports, which is what makes both shapes work, so
+# this one dependency has to resolve under either.
+try:
+    from . import wal_generation_guard
+except ImportError:  # pragma: no cover - bare-module import shape
+    import wal_generation_guard  # type: ignore[no-redef]
+
 logger = logging.getLogger(__name__)
 
 
@@ -384,6 +394,15 @@ def configure_connection(conn: sqlite3.Connection) -> None:
       same 5 MB main db while a 229 s compaction write ran. With mmap off,
       every read is a normal page-cache read; the corruption class disappears.
       Rollback: set back to 268435456 and restart the 3 hermes services.
+    - WAL generation guard (2026-10-18 root-cause fix) : the settings above all
+      target concurrent *writes*, and none of them could stop the real failure.
+      SQLite's POSIX locks on the main file and ``-shm`` are owned per process,
+      so this plugin's own read-only probe connections cancelled the long-lived
+      stores' locks every time one of them closed; the next sibling close (a
+      gateway restart) then unlinked ``-wal``/``-shm`` under the survivors and
+      two WAL generations began checkpointing into one db file. ``arm()``
+      re-takes those ranges as OFD locks, which a stray close cannot cancel.
+      See ``wal_generation_guard`` for the full mechanism and rollback.
     """
     conn.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
     _execute_wal_conversion_with_lock_retry(conn)
@@ -391,6 +410,7 @@ def configure_connection(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA wal_autocheckpoint=500")
     conn.execute("PRAGMA journal_size_limit=67108864")
     conn.execute("PRAGMA mmap_size=0")
+    wal_generation_guard.arm(conn)
 
 
 def _execute_wal_conversion_with_lock_retry(

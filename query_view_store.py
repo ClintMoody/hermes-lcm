@@ -21,6 +21,7 @@ import time
 from typing import Any, Iterator, Literal, NamedTuple, Sequence
 import uuid
 
+from . import wal_generation_guard
 from .db_bootstrap import (
     configure_connection,
     cross_process_gate_lock,
@@ -1265,6 +1266,9 @@ class QueryViewStore:
                     conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
                 except sqlite3.Error:
                     pass
+                # Hand the WAL generation back before the close so a true last
+                # close can still reset the sidecars (see wal_generation_guard).
+                wal_generation_guard.disarm(conn)
                 conn.close()
                 self._conn = None
 

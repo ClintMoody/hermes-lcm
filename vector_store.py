@@ -24,6 +24,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Iterator, Optional, Sequence
 
+from . import wal_generation_guard
 from .config import LCMConfig
 from .db_bootstrap import (
     configure_connection,
@@ -2950,6 +2951,9 @@ class VectorStore:
                     conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
             except sqlite3.Error:
                 pass
+            # Hand the WAL generation back before the close so a true last
+            # close can still reset the sidecars (see wal_generation_guard).
+            wal_generation_guard.disarm(conn)
             conn.close()
             self._conn = None
         with self._cache_lock:
