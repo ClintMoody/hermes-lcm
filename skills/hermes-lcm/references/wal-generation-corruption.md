@@ -79,6 +79,41 @@ core uses for `state.db`) rather than reimplementing it.
 Advisory locks cannot stop an external `unlink` or `os.replace`, and cannot heal a handle that is
 already stranded. A poisoned process must reopen the file, which means a restart.
 
+## Confirm the guard is armed, do not assume it
+
+The guard needs core's `hermes_state_lockguard`. When a bare `import` misses, it falls back to
+walking up from its own module path, `<hermes home>/plugins/hermes-lcm` ->
+`<hermes home>/hermes-agent`. If that directory is absent the import fails, and **the failure is
+deliberately silent**: `_lockguard` becomes None, `supported()` returns False, and the guard does
+nothing while every call site still succeeds. The corruption class returns with no error anywhere.
+
+After any install, move, or reorganisation, check it:
+
+```bash
+cd "$HERMES_HOME/plugins/hermes-lcm"
+python3 -c "import sys; sys.path.insert(0,'.'); import wal_generation_guard as g; print(g.supported())"
+```
+
+`True` means armed. `False` means inert: the files are present and import cleanly, but nothing is
+protected.
+
+The same condition shows up in the test suite as **skips, not failures**, which is why the counts
+matter more than the pass line:
+
+| Result | Meaning |
+|---|---|
+| `25 passed, 0 skipped` | guard armed |
+| `22 passed, 3 skipped`, reason `OFD locks unavailable on this host/runtime` | guard inert |
+
+A skip is indistinguishable from a silent no-op, so treat those 3 skips on Linux as a failure of
+the install, not a platform quirk.
+
+Note on location: `scripts/install.sh` symlinks the checkout to
+`<target root>/plugins/hermes-lcm`, and the fallback uses `abspath`, which preserves the symlink
+path rather than resolving it. So a clone can live anywhere **provided it is installed through that
+symlink**. Running the tests directly inside a bare clone that was never installed is the common
+way to see the 3 skips and wrongly conclude the host lacks OFD support.
+
 ## Fixes that look right and are not
 
 `mmap_size=0` and a cross-process write flock both serialise concurrent *writes*. SQLite already
